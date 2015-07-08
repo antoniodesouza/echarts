@@ -109,6 +109,7 @@ define('echarts/chart/force', [
         constructor: Force,
         type: ecConfig.CHART_TYPE_FORCE,
         _init: function () {
+            this.selectedMap = {};
             var legend = this.component.legend;
             var series = this.series;
             var serieName;
@@ -150,9 +151,9 @@ define('echarts/chart/force', [
         },
         _initSerie: function (serie, serieIdx) {
             this._temperature = 1;
-            if (serie.data) {
+            if (serie.matrix) {
                 this._graph = this._getSerieGraphFromDataMatrix(serie);
-            } else {
+            } else if (serie.links) {
                 this._graph = this._getSerieGraphFromNodeLinks(serie);
             }
             this._buildLinkShapes(serie, serieIdx);
@@ -277,17 +278,18 @@ define('echarts/chart/force', [
             var minRadius = this.query(serie, 'minRadius');
             var maxRadius = this.query(serie, 'maxRadius');
             this._steps = serie.steps || 1;
-            this._layout.center = this.parseCenter(this.zr, serie.center);
-            this._layout.width = this.parsePercent(serie.size, this.zr.getWidth());
-            this._layout.height = this.parsePercent(serie.size, this.zr.getHeight());
-            this._layout.large = serie.large;
-            this._layout.scaling = serie.scaling;
-            this._layout.ratioScaling = serie.ratioScaling;
-            this._layout.gravity = serie.gravity;
-            this._layout.temperature = 1;
-            this._layout.coolDown = serie.coolDown;
-            this._layout.preventNodeEdgeOverlap = serie.preventOverlap;
-            this._layout.preventNodeOverlap = serie.preventOverlap;
+            var layout = this._layout;
+            layout.center = this.parseCenter(this.zr, serie.center);
+            layout.width = this.parsePercent(serie.size, this.zr.getWidth());
+            layout.height = this.parsePercent(serie.size, this.zr.getHeight());
+            layout.large = serie.large;
+            layout.scaling = serie.scaling;
+            layout.ratioScaling = serie.ratioScaling;
+            layout.gravity = serie.gravity;
+            layout.temperature = 1;
+            layout.coolDown = serie.coolDown;
+            layout.preventNodeEdgeOverlap = serie.preventOverlap;
+            layout.preventNodeOverlap = serie.preventOverlap;
             var min = Infinity;
             var max = -Infinity;
             for (var i = 0; i < len; i++) {
@@ -375,7 +377,15 @@ define('echarts/chart/force', [
                     shape.style.color = category ? this.getColor(category.name) : this.getColor(node.id);
                 }
                 shape.style.iconType = this.deepQuery(queryTarget, 'symbol');
-                shape.style.width = shape.style.height = (this.deepQuery(queryTarget, 'symbolSize') || 0) * 2;
+                var symbolSize = this.deepQuery(queryTarget, 'symbolSize') || 0;
+                if (typeof symbolSize === 'number') {
+                    symbolSize = [
+                        symbolSize,
+                        symbolSize
+                    ];
+                }
+                shape.style.width = symbolSize[0] * 2;
+                shape.style.height = symbolSize[1] * 2;
                 if (shape.style.iconType.match('image')) {
                     shape.style.image = shape.style.iconType.replace(new RegExp('^image:\\/\\/'), '');
                     shape = new ImageShape({
@@ -423,6 +433,7 @@ define('echarts/chart/force', [
                 var link = gEdge.data;
                 var source = gEdge.node1;
                 var target = gEdge.node2;
+                var otherEdge = graph.getEdge(target, source);
                 var queryTarget = this._getEdgeQueryTarget(serie, link);
                 var linkType = this.deepQuery(queryTarget, 'type');
                 if (serie.linkSymbol && serie.linkSymbol !== 'none') {
@@ -441,6 +452,10 @@ define('echarts/chart/force', [
                     zlevel: this.getZlevelBase(),
                     z: this.getZBase()
                 });
+                if (otherEdge && otherEdge.shape) {
+                    linkShape.style.offset = 4;
+                    otherEdge.shape.style.offset = 4;
+                }
                 zrUtil.merge(linkShape.style, this.query(serie, 'itemStyle.normal.linkStyle'), true);
                 zrUtil.merge(linkShape.highlightStyle, this.query(serie, 'itemStyle.emphasis.linkStyle'), true);
                 if (typeof link.itemStyle !== 'undefined') {
@@ -475,7 +490,9 @@ define('echarts/chart/force', [
                             0,
                             0
                         ],
-                        rotation: 0
+                        rotation: 0,
+                        zlevel: this.getZlevelBase(),
+                        z: this.getZBase()
                     });
                     linkShape._symbolShape = symbolShape;
                     this.shapeList.push(symbolShape);
@@ -485,27 +502,36 @@ define('echarts/chart/force', [
         },
         _updateLinkShapes: function () {
             var v = vec2.create();
+            var n = vec2.create();
+            var p1 = vec2.create();
+            var p2 = vec2.create();
             var edges = this._graph.edges;
             for (var i = 0, len = edges.length; i < len; i++) {
                 var edge = edges[i];
                 var sourceShape = edge.node1.shape;
                 var targetShape = edge.node2.shape;
-                var p1 = sourceShape.position;
-                var p2 = targetShape.position;
-                edge.shape.style.xStart = p1[0];
-                edge.shape.style.yStart = p1[1];
-                edge.shape.style.xEnd = p2[0];
-                edge.shape.style.yEnd = p2[1];
-                if (edge.shape.type === 'bezier-curve') {
-                    edge.shape.style.cpX1 = (p1[0] + p2[0]) / 2 - (p2[1] - p1[1]) / 4;
-                    edge.shape.style.cpY1 = (p1[1] + p2[1]) / 2 - (p1[0] - p2[0]) / 4;
+                vec2.copy(p1, sourceShape.position);
+                vec2.copy(p2, targetShape.position);
+                var edgeShapeStyle = edge.shape.style;
+                vec2.sub(v, p1, p2);
+                vec2.normalize(v, v);
+                if (edgeShapeStyle.offset) {
+                    n[0] = v[1];
+                    n[1] = -v[0];
+                    vec2.scaleAndAdd(p1, p1, n, edgeShapeStyle.offset);
+                    vec2.scaleAndAdd(p2, p2, n, edgeShapeStyle.offset);
+                } else if (edge.shape.type === 'bezier-curve') {
+                    edgeShapeStyle.cpX1 = (p1[0] + p2[0]) / 2 - (p2[1] - p1[1]) / 4;
+                    edgeShapeStyle.cpY1 = (p1[1] + p2[1]) / 2 - (p1[0] - p2[0]) / 4;
                 }
+                edgeShapeStyle.xStart = p1[0];
+                edgeShapeStyle.yStart = p1[1];
+                edgeShapeStyle.xEnd = p2[0];
+                edgeShapeStyle.yEnd = p2[1];
                 edge.shape.modSelf();
                 if (edge.shape._symbolShape) {
                     var symbolShape = edge.shape._symbolShape;
-                    vec2.copy(symbolShape.position, targetShape.position);
-                    vec2.sub(v, sourceShape.position, targetShape.position);
-                    vec2.normalize(v, v);
+                    vec2.copy(symbolShape.position, p2);
                     vec2.scaleAndAdd(symbolShape.position, symbolShape.position, v, targetShape.style.width / 2 + 2);
                     var angle = Math.atan2(v[1], v[0]);
                     symbolShape.rotation = Math.PI / 2 - angle;
@@ -981,6 +1007,10 @@ define('echarts/chart/force', [
         }
     };
     ForceLayout.prototype.init = function (graph, useWorker) {
+        if (this._layoutWorker) {
+            this._layoutWorker.terminate();
+            this._layoutWorker = null;
+        }
         if (workerUrl && useWorker) {
             try {
                 if (!this._layoutWorker) {
@@ -997,10 +1027,6 @@ define('echarts/chart/force', [
         } else {
             if (!this._layout) {
                 this._layout = new ForceLayoutWorker();
-            }
-            if (this._layoutWorker) {
-                this._layoutWorker.terminate();
-                this._layoutWorker = null;
             }
         }
         this.temperature = 1;
@@ -1098,56 +1124,6 @@ define('echarts/chart/force', [
         this._layout = null;
     };
     return ForceLayout;
-});define('zrender/shape/BezierCurve', [
-    'require',
-    './Base',
-    '../tool/util'
-], function (require) {
-    'use strict';
-    var Base = require('./Base');
-    var BezierCurve = function (options) {
-        this.brushTypeOnly = 'stroke';
-        this.textPosition = 'end';
-        Base.call(this, options);
-    };
-    BezierCurve.prototype = {
-        type: 'bezier-curve',
-        buildPath: function (ctx, style) {
-            ctx.moveTo(style.xStart, style.yStart);
-            if (typeof style.cpX2 != 'undefined' && typeof style.cpY2 != 'undefined') {
-                ctx.bezierCurveTo(style.cpX1, style.cpY1, style.cpX2, style.cpY2, style.xEnd, style.yEnd);
-            } else {
-                ctx.quadraticCurveTo(style.cpX1, style.cpY1, style.xEnd, style.yEnd);
-            }
-        },
-        getRect: function (style) {
-            if (style.__rect) {
-                return style.__rect;
-            }
-            var _minX = Math.min(style.xStart, style.xEnd, style.cpX1);
-            var _minY = Math.min(style.yStart, style.yEnd, style.cpY1);
-            var _maxX = Math.max(style.xStart, style.xEnd, style.cpX1);
-            var _maxY = Math.max(style.yStart, style.yEnd, style.cpY1);
-            var _x2 = style.cpX2;
-            var _y2 = style.cpY2;
-            if (typeof _x2 != 'undefined' && typeof _y2 != 'undefined') {
-                _minX = Math.min(_minX, _x2);
-                _minY = Math.min(_minY, _y2);
-                _maxX = Math.max(_maxX, _x2);
-                _maxY = Math.max(_maxY, _y2);
-            }
-            var lineWidth = style.lineWidth || 1;
-            style.__rect = {
-                x: _minX - lineWidth,
-                y: _minY - lineWidth,
-                width: _maxX - _minX + lineWidth,
-                height: _maxY - _minY + lineWidth
-            };
-            return style.__rect;
-        }
-    };
-    require('../tool/util').inherits(BezierCurve, Base);
-    return BezierCurve;
 });define('echarts/layout/forceLayoutWorker', [
     'require',
     'zrender/tool/vector'

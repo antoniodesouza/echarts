@@ -37,7 +37,7 @@ define(function (require) {
                            : (ecData.get(self.shapeList[i], 'series') || {}).name;
                     if (name == targetName 
                         && !self.shapeList[i].invisible 
-                        && !self.shapeList[i]._animating
+                        && !self.shapeList[i].__animating
                     ) {
                         self.zr.addHoverShape(self.shapeList[i]);
                     }
@@ -55,6 +55,9 @@ define(function (require) {
     Base.prototype = {
         canvasSupported: require('zrender/tool/env').canvasSupported,
         _getZ : function(zWhat) {
+            if (this[zWhat] != null) {
+                return this[zWhat];
+            }
             var opt = this.ecTheme[this.type];
             if (opt && opt[zWhat] != null) {
                 return opt[zWhat];
@@ -88,13 +91,16 @@ define(function (require) {
          */
         reformOption: function (opt) {
             // 默认配置项动态多级合并，依赖加载的组件选项未被merge到ecTheme里，需要从config里取
-            return zrUtil.merge(
+            opt = zrUtil.merge(
                        zrUtil.merge(
                            opt || {},
                            zrUtil.clone(this.ecTheme[this.type] || {})
                        ),
                        zrUtil.clone(ecConfig[this.type] || {})
                    );
+            this.z = opt.z;
+            this.zlevel = opt.zlevel;
+            return opt;
         },
         
         /**
@@ -230,7 +236,9 @@ define(function (require) {
         parsePercent: number.parsePercent,
         parseCenter: number.parseCenter,
         parseRadius: number.parseRadius,
-        numAddCommas: number.addCommas
+        numAddCommas: number.addCommas,
+
+        getPrecision: number.getPrecision
     };
     
     return Base;

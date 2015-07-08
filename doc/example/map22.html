@@ -83,20 +83,24 @@ option = {
         data: [{}],
         hoverable: false,
         clickable: false,
+        roam: true,
         markLine: {
             effect: {
-                show: true
+                color: 'rgba(204, 246, 255, 0.09)',
+                show: true,
+                period: 40
             },
             bundling: {
                 enable: true
             },
+            large: true,
             smooth: true,
-            smoothness: 0.2,
+            smoothness: 0.1,
             symbol: ['none', 'none'],
             itemStyle: {
                 normal: {
                     lineStyle: {
-                        color: 'rgba(2, 166, 253, 0.1)',
+                        color: 'rgba(2, 166, 253, 0.05)',
                         type: 'solid',
                         width: 0.5,
                         opacity: 0.2
@@ -128,10 +132,11 @@ function getGeoCoord (name) {
 
 $.ajax({
     url: 'data/migration.json',
+    dataType: 'json',
     success: function(data) {
         option.series[0].markLine.data = data.allLine.sort(function (a, b) {
             return b.num - a.num
-        }).slice(0, 1500).map(function (line) {
+        }).slice(0, 3000).map(function (line) {
             return [{
                 geoCoord: getGeoCoord(line.start)   
             }, {

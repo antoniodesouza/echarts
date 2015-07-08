@@ -27,6 +27,8 @@ define(function (require) {
         // stack: null
         xAxisIndex: 0,
         yAxisIndex: 0,
+        // 'nearest', 'min', 'max', 'average'
+        dataFilter: 'nearest',
         itemStyle: {
             normal: {
                 // color: 各异,
@@ -516,13 +518,15 @@ define(function (require) {
                         }
                         else {
                             // 大数据模式截取pointList
-                            singlePL = this._getLargePointList(orient, singlePL);
+                            singlePL = this._getLargePointList(
+                                orient, singlePL, serie.dataFilter
+                            );
                         }
-                        
+
                         // 折线图
                         var polylineShape = new PolylineShape({
-                            zlevel: this.getZlevelBase(),
-                            z: this.getZBase(),
+                            zlevel: serie.zlevel,
+                            z: serie.z,
                             style: {
                                 miterLimit: lineWidth,
                                 pointList: singlePL,
@@ -566,8 +570,8 @@ define(function (require) {
                         
                         if (isFill) {
                             var halfSmoothPolygonShape = new HalfSmoothPolygonShape({
-                                zlevel: this.getZlevelBase(),
-                                z: this.getZBase(),
+                                zlevel: serie.zlevel,
+                                z: serie.z,
                                 style: {
                                     miterLimit: lineWidth,
                                     pointList: zrUtil.clone(singlePL).concat([
@@ -647,7 +651,7 @@ define(function (require) {
         /**
          * 大规模pointList优化 
          */
-        _getLargePointList: function(orient, singlePL) {
+        _getLargePointList: function(orient, singlePL, filter) {
             var total;
             if (orient === 'horizontal') {
                 total = this.component.grid.getWidth();
@@ -658,12 +662,75 @@ define(function (require) {
             
             var len = singlePL.length;
             var newList = [];
+
+            if (typeof(filter) != 'function') {
+                switch (filter) {
+                    case 'min':
+                        filter = function (arr) {
+                            return Math.max.apply(null, arr);
+                        };
+                        break;
+                    case 'max':
+                        filter = function (arr) {
+                            return Math.min.apply(null, arr);
+                        };
+                        break;
+                    case 'average':
+                        filter = function (arr) {
+                            var total = 0;
+                            for (var i = 0; i < arr.length; i++) {
+                                total += arr[i];
+                            }
+                            return total / arr.length;
+                        };
+                        break;
+                    default:
+                        filter = function (arr) {
+                            return arr[0];
+                        }
+                }
+            }
+
+            var windowData = [];
             for (var i = 0; i < total; i++) {
-                newList[i] = singlePL[Math.floor(len / total * i)];
+                var idx0 = Math.floor(len / total * i);
+                var idx1 = Math.min(Math.floor(len / total * (i + 1)), len);
+                if (idx1 <= idx0) {
+                    continue;
+                }
+
+                for (var j = idx0; j < idx1; j++) {
+                    windowData[j - idx0] = orient === 'horizontal'
+                        ? singlePL[j][1] : singlePL[j][0];
+                }
+
+                windowData.length = idx1 - idx0;
+                var filteredVal = filter(windowData);
+                var nearestIdx = -1;
+                var minDist = Infinity;
+                // 寻找值最相似的点，使用其其它属性
+                for (var j = idx0; j < idx1; j++) {
+                    var val = orient === 'horizontal'
+                        ? singlePL[j][1] : singlePL[j][0];
+                    var dist = Math.abs(val - filteredVal);
+                    if (dist < minDist) {
+                        nearestIdx = j;
+                        minDist = dist;
+                    }
+                }
+
+                var newItem = singlePL[nearestIdx].slice();
+                if (orient === 'horizontal') {
+                    newItem[1] = filteredVal;
+                }
+                else {
+                    newItem[0] = filteredVal;
+                }
+                newList.push(newItem);
             }
             return newList;
         },
-        
+
         _getSmooth: function (isSmooth/*, pointList, orient*/) {
             if (isSmooth) {
                 /* 不科学啊，发现0.3通用了
@@ -721,8 +788,8 @@ define(function (require) {
                 '#fff',
                 orient === 'vertical' ? 'horizontal' : 'vertical' // 翻转
             );
-            itemShape.zlevel = this.getZlevelBase();
-            itemShape.z = this.getZBase() + 1;
+            itemShape.zlevel = serie.zlevel;
+            itemShape.z = serie.z + 1;
             
             if (this.deepQuery([data, serie, this.option], 'calculable')) {
                 this.setCalculable(itemShape);
@@ -810,7 +877,7 @@ define(function (require) {
         /**
          * 动态数据增加动画 
          */
-        addDataAnimation: function (params) {
+        addDataAnimation: function (params, done) {
             var series = this.series;
             var aniMap = {}; // seriesIndex索引参数
             for (var i = 0, l = params.length; i < l; i++) {
@@ -823,6 +890,19 @@ define(function (require) {
             var seriesIndex;
             var pointList;
             var isHorizontal; // 是否横向布局， isHorizontal;
+
+            var aniCount = 0;
+            function animationDone() {
+                aniCount--;
+                if (aniCount === 0) {
+                    done && done();
+                }
+            }
+            function animationDuring(target) {
+                // 强制更新曲线控制点
+                target.style.controlPointList = null;
+            }
+
             for (var i = this.shapeList.length - 1; i >= 0; i--) {
                 seriesIndex = this.shapeList[i]._seriesIndex;
                 if (aniMap[seriesIndex] && !aniMap[seriesIndex][3]) {
@@ -860,16 +940,9 @@ define(function (require) {
                             }
                             isHorizontal ? (x = -dx, y = 0) : (x = 0, y = dy);
                         }
+                        this.shapeList[i].style.controlPointList = null;
                         
-                        this.zr.modShape(
-                            this.shapeList[i].id, 
-                            {
-                                style: {
-                                    pointList: this.shapeList[i].style.pointList
-                                }
-                            },
-                            true
-                        );
+                        this.zr.modShape(this.shapeList[i]);
                     }
                     else {
                         // 拐点动画
@@ -890,13 +963,22 @@ define(function (require) {
                         }
                     }
                     this.shapeList[i].position = [0, 0];
+
+                    aniCount++;
                     this.zr.animate(this.shapeList[i].id, '')
                         .when(
                             this.query(this.option, 'animationDurationUpdate'),
                             { position: [ x, y ] }
                         )
+                        .during(animationDuring)
+                        .done(animationDone)
                         .start();
                 }
+            }
+
+            // 没有动画
+            if (!aniCount) {
+                done && done();
             }
         }
     };

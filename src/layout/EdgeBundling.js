@@ -14,6 +14,7 @@ define(function (require) {
     var v2DistSquare = vec2.distSquare;
     var v2Dist = vec2.dist;
     var v2Copy = vec2.copy;
+    var v2Clone = vec2.clone;
 
     function squaredDistance(a, b) {
         a = a.array;
@@ -33,7 +34,7 @@ define(function (require) {
         ];
 
         this.group = group;
-    };
+    }
 
     function Edge(edge) {
         var points = edge.points;
@@ -122,7 +123,29 @@ define(function (require) {
             // Get new edges
             var newEdges = [];
 
-            var buildNewEdges = function (groups, fromEdge) {
+            function pointApproxEqual(p0, p1) {
+                // Use Float32Array may affect the precision
+                return v2DistSquare(p0, p1) < 1e-10;
+            }
+            // Clone all points to make sure all points in edge will not reference to the same array
+            // And clean the duplicate points
+            function cleanEdgePoints(edgePoints, rawEdgePoints) {
+                var res = [];
+                var off = 0;
+                for (var i = 0; i < edgePoints.length; i++) {
+                    if (! (off > 0 && pointApproxEqual(edgePoints[i], res[off - 1]))) {
+                        res[off++] = v2Clone(edgePoints[i]);
+                    }
+                }
+                // Edge has been reversed
+                if (rawEdgePoints[0] && !pointApproxEqual(res[0], rawEdgePoints[0])) {
+                    res = res.reverse();
+                }
+                return res;
+            }
+
+            var buildNewEdges = function (groups, fromEdgePoints) {
+                var newEdgePoints;
                 for (var i = 0; i < groups.length; i++) {
                     var group = groups[i];
                     if (
@@ -133,29 +156,29 @@ define(function (require) {
                         for (var j = 0; j < group.edgeList.length; j++) {
                             newGroups.push(group.edgeList[j].edge.group);
                         }
-                        if (! fromEdge) {
-                            newEdge = [];
+                        if (! fromEdgePoints) {
+                            newEdgePoints = [];
                         } else {
-                            newEdge = fromEdge.slice();
+                            newEdgePoints = fromEdgePoints.slice();
                         }
-                        newEdge.unshift(group.mp0);
-                        newEdge.push(group.mp1);
-                        buildNewEdges(newGroups, newEdge);
+                        newEdgePoints.unshift(group.mp0);
+                        newEdgePoints.push(group.mp1);
+                        buildNewEdges(newGroups, newEdgePoints);
                     } else {
                         // console.log(group.edgeList.length);
                         for (var j = 0; j < group.edgeList.length; j++) {
                             var edge = group.edgeList[j];
-                            if (! fromEdge) {
-                                newEdge = [];
+                            if (! fromEdgePoints) {
+                                newEdgePoints = [];
                             } else {
-                                newEdge = fromEdge.slice();
+                                newEdgePoints = fromEdgePoints.slice();
                             }
-                            newEdge.unshift(group.mp0);
-                            newEdge.push(group.mp1);
-                            newEdge.unshift(edge.getStartPoint());
-                            newEdge.push(edge.getEndPoint());
+                            newEdgePoints.unshift(group.mp0);
+                            newEdgePoints.push(group.mp1);
+                            newEdgePoints.unshift(edge.getStartPoint());
+                            newEdgePoints.push(edge.getEndPoint());
                             newEdges.push({
-                                points: newEdge,
+                                points: cleanEdgePoints(newEdgePoints, edge.edge.points),
                                 rawEdge: edge.edge
                             });
                         }
@@ -228,8 +251,9 @@ define(function (require) {
                 }
                 if (mostSavingInkEdge) {
                     totalSavedInk += maxSavedInk;
+                    var group;
                     if (! mostSavingInkEdge.group) {
-                        var group = new BundledEdgeGroup();
+                        group = new BundledEdgeGroup();
                         groups.push(group);
                         group.addEdge(mostSavingInkEdge);
                     }
@@ -254,7 +278,7 @@ define(function (require) {
                 groups: groups,
                 edges: edges,
                 savedInk: totalSavedInk
-            }
+            };
         },
 
         _calculateEdgeEdgeInk: (function () {
@@ -337,7 +361,7 @@ define(function (require) {
                 this._limitTurningAngle(
                     endPointSet, cp1, cp0, mp1
                 );
-            }
+            };
         })(),
 
         _limitTurningAngle: (function () {
@@ -385,7 +409,7 @@ define(function (require) {
                 }
             };
         })()
-    }
+    };
 
     return EdgeBundling;
 });
